@@ -3,3 +3,4 @@ priv/
 *.o
 *.swp
 .eunit/
+tags

@@ -1,74 +1,71 @@
 -module(dcerl).
 -author('yoshiyuki.kanno@stoic.co.jp').
 
+-include("dcerl.hrl").
+
 -export([start/3, stop/1]).
--export([put/3, put4chunked/4, remove/2, get/2, getpath/2, get4chunked/2, flush/1, delete/1]). 
+-export([put/3, put_begin/2, put_chunk/3, put_end/3, remove/2, get/2, get_chunk/3, flush/1, delete/1]). 
 
 %
 % @doc
-% Descriptor = dcerl:start(DataDir, JournalDir, MaxSize),
--spec(start(string(), string(), integer()) -> reference()).
-start(_DataDir, _JournalDir, _MaxSize) ->
-    true.
+-spec(start(string(), string(), integer()) -> #dcerl_state{}|{error, any()}).
+start(_DataDir, _JournalDir, _MaxSize) -> #dcerl_state{}.
 
 %
 % @doc
-% dcerl:put(Descriptor, Key, BinBody),
--spec(put(reference(), binary(), binary()|string()) -> boolean()).
-put(_Descriptor, _Key, Body) when is_binary(Body) ->
-    true.
+-spec(put(#dcerl_state{}, Key::binary(), Val::binary()) -> ok|{error, any()}).
+put(_State, _Key, _Val) -> ok.
 
 %
 % @doc
-% dcerl:put4chunked(Descriptor, Key, BinChunkedBody, Tail),
--spec(put4chunked(reference(), binary(), binary(), boolean()) -> boolean()).
-put4chunked(_Descriptor, _Key, _BinChunkedBody, _Tail) ->
-    true.
+-spec(put_begin(#dcerl_state{}, Key::binary()) -> #dcerl_fd{}|{error, any()}).
+put_begin(_State, _Key) -> #dcerl_fd{}.
 
 %
 % @doc
-% dcerl:remove(Descriptor, Key),
--spec(remove(reference(), binary()) -> boolean()).
-remove(_Descriptor, _Key) ->
-    true.
+-spec(put_chunk(#dcerl_state{}, #dcerl_fd{}, Chunk::binary()) -> ok|{error, any()}).
+put_chunk(_State, _Fd, _Chunk) -> ok.
+
 %
 % @doc
-% RespBody = dcerl:get(Descriptor, Key),
--spec(get(reference(), binary()) -> binary()).
-get(_Descriptor, _Key) ->
+-spec(put_end(#dcerl_state{}, #dcerl_fd{}, Commit::boolean()) -> ok|{error, any()}).
+put_end(_State, _Fd, _Commit) -> ok.
+
+%
+% @doc
+-spec(remove(#dcerl_state{}, Key::binary()) -> ok|{error, any()}).
+remove(_State, _Key) -> ok.
+
+%
+% @doc
+-spec(get(#dcerl_state{}, Key::binary()) -> binary()|#dcerl_fd{}|{error, any()}).
+get(_State, _Key) ->
     <<>>.
 
 %
 % @doc
-% CachedPath = dcerl:getpath(Descriptor, Key),
--spec(getpath(reference(), binary()) -> string()).
-getpath(_Descriptor, _Key) ->
-    "".
-
-%
-% @doc
-% {ChunkedBody, Tail} = dcerl:get4chunked(Descriptor, Key),
--spec(get4chunked(reference(), binary()) -> {binary(), boolean()}).
-get4chunked(_Descriptor, _Key) ->
+-spec(get_chunk(#dcerl_state{}, #dcerl_fd{}, Key::binary()) -> {Chunk::binary(), Tail::boolean()}|{error, any()}).
+get_chunk(_State, _Fd, _Key) ->
     {<<>>, true}.
 
 %
 % @doc
 % dcerl:flush(Descriptor),
--spec(flush(reference()) -> boolean()).
-flush(_Descriptor) ->
-    true.
+-spec(flush(#dcerl_state{}) -> ok|{error, any()}).
+flush(_State) ->
+    ok.
 
 %
 % @doc
 % dcerl:delete(Descriptor),
--spec(delete(reference()) -> boolean()).
-delete(_Descriptor) ->
-    true.
+-spec(delete(#dcerl_state{}) -> ok|{error, any()}).
+delete(_State) ->
+    ok.
 
 %
 % @doc
 % dcerl:stop(Descriptor),
--spec(stop(reference()) -> boolean()).
-stop(_Descriptor) ->
-    true.
+-spec(stop(#dcerl_state{}) -> ok|{error, any()}).
+stop(_State) ->
+    ok.
+

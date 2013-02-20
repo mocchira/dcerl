@@ -1,8 +1,0 @@
-{application, dcerl,
-  [{description, "Erlang disk based caching library"},
-   {mod, {dcerl_app, []}},
-   {vsn, "0.1.0"},
-   {modules, []},
-   {registered, []},
-   {applications, [kernel, stdlib]}
-  ]}.
