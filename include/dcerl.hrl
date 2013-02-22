@@ -23,7 +23,18 @@
     journalfile_iodev      :: file:io_device(),
     datadir_path      = "" :: string(),
     max_cache_size    = 0  :: pos_integer(),
+    redundant_op_cnt  = 0  :: non_neg_integer(),
+    ongoing_keys           :: set(),
     cache_stats            :: #dcerl_cache_stats{},
     cache_entries          :: term() % NIF resource
 }).
+
+-define(JOURNAL_FNAME, "journal").
+-define(JOURNAL_MAGIC, "erlang.dcerl\n").
+-define(JOURNAL_SEP, " \n").
+-define(JOURNAL_OP_READ,   "READ").
+-define(JOURNAL_OP_CLEAN,  "CLEAN").
+-define(JOURNAL_OP_DIRTY,  "DIRTY").
+-define(JOURNAL_OP_REMOVE, "REMOVE").
+-define(JOURNAL_MAX_RED_OP_CNT, 2000).
 

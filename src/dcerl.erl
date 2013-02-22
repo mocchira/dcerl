@@ -2,6 +2,7 @@
 -author('Yoshiyuki Kanno').
 
 -export([start/0, put/2, get/2, remove/2, eldest/1, items/1, stop/1]).
+-export([iterator/1, iterator_next/1, iterator_has_next/1]).
 -on_load(init/0).
 
 
@@ -60,6 +61,21 @@ remove(_Res, _Key) ->
 -spec(eldest(any()) ->
              {ok, binary()} | {error, any()}).
 eldest(_Res) ->
+    exit(nif_library_not_loaded).
+
+-spec(iterator(any()) ->
+             {ok, binary()} | {error, any()}).
+iterator(_Res) ->
+    exit(nif_library_not_loaded).
+
+-spec(iterator_next(any()) ->
+             {ok, binary()} | {error, any()}).
+iterator_next(_Res) ->
+    exit(nif_library_not_loaded).
+
+-spec(iterator_has_next(any()) ->
+        boolean()).
+iterator_has_next(_Res) ->
     exit(nif_library_not_loaded).
 
 %% @doc Retrieve total of cached objects

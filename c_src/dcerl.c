@@ -155,6 +155,36 @@ void* dcerl_eldest(dcerl_t *dcerl, int* eldest_len) {
   return lru_item_key(item);
 }
 
+void* dcerl_iterator(dcerl_t *dcerl, int* item_len) {
+  lru_item_t* item;
+  d_node_t* node;
+  node = lru_iterator(dcerl->lru);
+  if (node == NULL) {
+    *item_len = 0;
+    return NULL;
+  }
+  item = (lru_item_t*)node->data;
+  *item_len = lru_item_keylen(item);
+  return lru_item_key(item);
+}
+
+void* dcerl_iterator_next(dcerl_t *dcerl, int* item_len) {
+  lru_item_t* item;
+  d_node_t* node;
+  node = lru_iterator_next(dcerl->lru);
+  if (node == NULL) {
+    *item_len = 0;
+    return NULL;
+  }
+  item = (lru_item_t*)node->data;
+  *item_len = lru_item_keylen(item);
+  return lru_item_key(item);
+}
+
+bool dcerl_iterator_has_next(dcerl_t *dcerl) {
+    return lru_iterator_has_next(dcerl->lru);
+}
+
 /**
  * Destroy LRU-Storage
  */

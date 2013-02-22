@@ -12,6 +12,9 @@ static ERL_NIF_TERM dcerl_nif_get(ErlNifEnv* env, int argc, const ERL_NIF_TERM a
 static ERL_NIF_TERM dcerl_nif_put(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[]);
 static ERL_NIF_TERM dcerl_nif_remove(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[]);
 static ERL_NIF_TERM dcerl_nif_eldest(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[]);
+static ERL_NIF_TERM dcerl_nif_iterator(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[]);
+static ERL_NIF_TERM dcerl_nif_iterator_next(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[]);
+static ERL_NIF_TERM dcerl_nif_iterator_has_next(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[]);
 static ERL_NIF_TERM dcerl_nif_items(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[]);
 
 static ErlNifFunc nif_funcs[] =
@@ -22,6 +25,9 @@ static ErlNifFunc nif_funcs[] =
     {"put" ,   2, dcerl_nif_put},
     {"remove", 2, dcerl_nif_remove},
     {"eldest", 1, dcerl_nif_eldest},
+    {"iterator", 1, dcerl_nif_iterator},
+    {"iterator_next", 1, dcerl_nif_iterator_next},
+    {"iterator_has_next", 1, dcerl_nif_iterator_has_next},
     {"items" , 1, dcerl_nif_items}
   };
 
@@ -29,6 +35,8 @@ static ERL_NIF_TERM atom_ok;
 static ERL_NIF_TERM atom_error;
 static ERL_NIF_TERM atom_oom;
 static ERL_NIF_TERM atom_not_found;
+static ERL_NIF_TERM atom_true;
+static ERL_NIF_TERM atom_false;
 static ERL_NIF_TERM tuple_error_oom;
 
 /**
@@ -169,10 +177,6 @@ static ERL_NIF_TERM dcerl_nif_remove(ErlNifEnv* env, int argc, const ERL_NIF_TER
   return atom_ok;
 }
 
-
-/**
- * Retrieve summary of size of stored objects
- */
 static ERL_NIF_TERM dcerl_nif_eldest(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[]) {
   dcerl_t *obj;
   ErlNifResourceType* pert;
@@ -200,6 +204,85 @@ static ERL_NIF_TERM dcerl_nif_eldest(ErlNifEnv* env, int argc, const ERL_NIF_TER
 
   memcpy(keybin.data, key, keylen);
   return enif_make_tuple2(env, atom_ok, enif_make_binary(env, &keybin));
+}
+
+static ERL_NIF_TERM dcerl_nif_iterator(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[]) {
+  dcerl_t *obj;
+  ErlNifResourceType* pert;
+  ErlNifBinary keybin;
+  void* key;
+  int keylen;
+
+  if (argc < 1) {
+    return enif_make_badarg(env);
+  }
+
+  pert = (ErlNifResourceType*)enif_priv_data(env);
+
+  if (!enif_get_resource(env, argv[0], pert, (void**)&obj)) {
+    return enif_make_badarg(env);
+  }
+
+  key = dcerl_iterator(obj, &keylen);
+  if (key == NULL) {
+    return atom_not_found;
+  }
+  if (!enif_alloc_binary(keylen, &keybin)) {
+    return enif_make_badarg(env);
+  }
+
+  memcpy(keybin.data, key, keylen);
+  return enif_make_tuple2(env, atom_ok, enif_make_binary(env, &keybin));
+}
+
+static ERL_NIF_TERM dcerl_nif_iterator_next(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[]) {
+  dcerl_t *obj;
+  ErlNifResourceType* pert;
+  ErlNifBinary keybin;
+  void* key;
+  int keylen;
+
+  if (argc < 1) {
+    return enif_make_badarg(env);
+  }
+
+  pert = (ErlNifResourceType*)enif_priv_data(env);
+
+  if (!enif_get_resource(env, argv[0], pert, (void**)&obj)) {
+    return enif_make_badarg(env);
+  }
+
+  key = dcerl_iterator_next(obj, &keylen);
+  if (key == NULL) {
+    return atom_not_found;
+  }
+  if (!enif_alloc_binary(keylen, &keybin)) {
+    return enif_make_badarg(env);
+  }
+
+  memcpy(keybin.data, key, keylen);
+  return enif_make_tuple2(env, atom_ok, enif_make_binary(env, &keybin));
+}
+
+static ERL_NIF_TERM dcerl_nif_iterator_has_next(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[]) {
+  dcerl_t *obj;
+  ErlNifResourceType* pert;
+
+  if (argc < 1) {
+    return enif_make_badarg(env);
+  }
+
+  pert = (ErlNifResourceType*)enif_priv_data(env);
+
+  if (!enif_get_resource(env, argv[0], pert, (void**)&obj)) {
+    return enif_make_badarg(env);
+  }
+
+  if (dcerl_iterator_has_next(obj)) {
+    return atom_true;
+  } else {
+    return atom_false;
+  }
 }
 
 /**
@@ -241,6 +324,8 @@ static int onload(ErlNifEnv* env, void** priv_data, ERL_NIF_TERM load_info) {
   atom_error = enif_make_atom(env, "error");
   atom_oom = enif_make_atom(env, "oom");
   atom_not_found = enif_make_atom(env, "not_found");
+  atom_true = enif_make_atom(env, "true");
+  atom_false = enif_make_atom(env, "false");
   tuple_error_oom = enif_make_tuple2(env, atom_error, atom_oom);
   return 0;
 }

@@ -13,6 +13,7 @@ typedef void (*EjectionCallback)(void*, char*, int);
 
 typedef struct _lru_t {
   d_list_t *list;
+  d_node_t *iterator;
 }  lru_t;
 
 typedef struct _lru_item_t {
@@ -30,6 +31,9 @@ typedef struct _lru_item_t {
 #define lru_item_vallen(item) ((item)->vallen)
 #define lru_item_size(item) (lru_item_keylen(item) + lru_item_vallen(item))
 #define lru_eldest(lru) (lru->list->tail ? lru->list->tail->data: NULL)
+#define lru_iterator(lru) (lru->iterator = lru->list->head)
+#define lru_iterator_next(lru) (lru->iterator ? lru->iterator = lru->iterator->next: NULL)
+#define lru_iterator_has_next(lru) (lru->iterator ? lru->iterator->next != NULL: false)
 
 lru_t * lru_create();
 void lru_destroy(lru_t *lru);

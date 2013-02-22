@@ -10,7 +10,8 @@
 %
 % @doc
 -spec(start(string(), string(), integer()) -> #dcerl_state{}|{error, any()}).
-start(_DataDir, _JournalDir, _MaxSize) -> #dcerl_state{}.
+start(_DataDir, JournalDir, _MaxSize) ->
+    journal_read(JournalDir).
 
 %
 % @doc
@@ -70,3 +71,91 @@ delete(_State) ->
 stop(_State) ->
     ok.
 
+%
+% ==== private functions ====
+%
+
+%
+% @doc
+% journal file operations
+-spec(journal_read(#dcerl_state{}) -> {ok, #dcerl_state{}}|{error, any()}).
+journal_read(#dcerl_state{journaldir_path = JD} = DState) ->
+    JF = journal_filename(JD),
+    case file:open(JF, [read, raw, read_ahead]) of
+        {ok, IoDev} ->
+            try
+                {ok, ?JOURNAL_MAGIC} = file:read_line(IoDev),
+                {ok, CE} = dcerl:start(),
+                journal_read_line(DState#dcerl_state{
+                        journalfile_iodev = IoDev,
+                        ongoing_keys      = sets:new(),
+                        cache_entries     = CE
+                    })
+            catch
+                exit:Reason ->
+                    error_logger:error_msg("~p,~p,~p,~p~n",
+                                           [{module, ?MODULE_STRING}, 
+                                            {function, "journal_read/1"},
+                                            {line, ?LINE}, 
+                                            {body, Reason}]),
+                    {error, Reason}
+            after
+                file:close(IoDev)
+            end; 
+        Error ->
+            Error
+    end.
+
+journal_read_line(#dcerl_state{journalfile_iodev = IoDev} = DState) ->
+    Line = file:read_line(IoDev),
+    journal_read_line(DState, Line).
+
+journal_read_line(#dcerl_state{journalfile_iodev = IoDev, 
+                               redundant_op_cnt  = OpCnt,
+                               ongoing_keys      = OnKeys,
+                               cache_entries     = CE} = DState, 
+                              {ok, Line}) ->
+    [Op,Key|_]= string:tokens(Line, ?JOURNAL_SEP),
+    BinKey = list_to_binary(Key),
+    case Op of
+        ?JOURNAL_OP_REMOVE ->
+            dcerl:remove(CE, BinKey),
+            journal_read_line(DState#dcerl_state{redundant_op_cnt = OpCnt + 1},
+                              file:read_line(IoDev));
+        _ -> 
+            case dcerl:get(CE, BinKey) of
+                not_found ->
+                    dcerl:put(CE, BinKey);
+                _ -> void
+            end,
+            case Op of
+                ?JOURNAL_OP_DIRTY ->
+                    journal_read_line(
+                        DState#dcerl_state{
+                            redundant_op_cnt = OpCnt + 1,
+                            ongoing_keys     = sets:add_element(BinKey, OnKeys)},
+                        file:read_line(IoDev));
+                ?JOURNAL_OP_CLEAN ->
+                    journal_read_line(
+                        DState#dcerl_state{
+                            redundant_op_cnt = OpCnt + 1,
+                            ongoing_keys     = sets:del_element(BinKey, OnKeys)},
+                        file:read_line(IoDev));
+                ?JOURNAL_OP_READ ->
+                    journal_read_line(
+                        DState#dcerl_state{
+                            redundant_op_cnt = OpCnt + 1},
+                        file:read_line(IoDev));
+                _ ->
+                    {error, invalid_journal_format}
+            end
+    end;
+journal_read_line(#dcerl_state{journalfile_iodev = _IoDev} = _DState, 
+                              {error, Reason}) ->
+    {error, Reason};
+journal_read_line(#dcerl_state{redundant_op_cnt = OpCnt, cache_entries = CE} = DState, 
+                               eof) ->
+    {ok, DState#dcerl_state{redundant_op_cnt = OpCnt - dcerl:items(CE)}}.
+
+journal_filename(JournalDir) ->
+    filename:join(JournalDir, ?JOURNAL_FNAME).
