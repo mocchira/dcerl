@@ -11,7 +11,11 @@
 % @doc
 -spec(start(string(), string(), integer()) -> #dcerl_state{}|{error, any()}).
 start(_DataDir, JournalDir, _MaxSize) ->
-    journal_read(JournalDir).
+    case journal_read(#dcerl_state{journaldir_path = JournalDir}) of
+        {ok, DS} ->
+            journal_process(DS);
+        _ -> void
+    end.
 
 %
 % @doc
@@ -157,5 +161,53 @@ journal_read_line(#dcerl_state{redundant_op_cnt = OpCnt, cache_entries = CE} = D
                                eof) ->
     {ok, DState#dcerl_state{redundant_op_cnt = OpCnt - dcerl:items(CE)}}.
 
+journal_process(#dcerl_state{journaldir_path = JournalDir} = DState) ->
+    TmpPath = journal_filename(JournalDir) ++ ".tmp",
+    journal_process(DState, delete_file(TmpPath)).
+
+journal_process(_, {error, Reason}) ->
+    {error, Reason};
+journal_process(#dcerl_state{cache_entries = CE} = DState, ok) ->
+    journal_process_2(DState, dcerl:iterator(CE)).
+
+journal_process_2(#dcerl_state{cache_entries   = CE,
+                               cache_stats     = CS,
+                               datadir_path    = DataDir,
+                               ongoing_keys    = Keys} = DState, {ok, BinKey}) ->
+    case sets:is_element(BinKey, Keys) of
+        true -> 
+            NewKeys = sets:del_element(BinKey, Keys),
+            dcerl:remove(CE, BinKey),
+            DataPath = data_filename(DataDir, BinKey),
+            TmpPath = DataPath ++ ".tmp",
+            file:delete(DataPath),
+            file:delete(TmpPath),
+            journal_process_2(DState#dcerl_state{ongoing_keys = NewKeys}, dcerl:iterator_next(CE));
+        false ->
+            DataPath = data_filename(DataDir, BinKey),
+            PrevSize = CS#dcerl_cache_stats.cached_size,
+            PrevRec = CS#dcerl_cache_stats.records,
+            Size = filelib:file_size(DataPath),
+            journal_process_2(DState#dcerl_state{
+                    cache_stats = CS#dcerl_cache_stats{
+                        cached_size = PrevSize + Size,
+                        records     = PrevRec + 1}}, dcerl:iterator_next(CE))
+    end;
+journal_process_2(DState, not_found) ->
+    {ok, DState}.
+
+data_filename(DataDir, BinKey) ->
+    StrKey = binary_to_list(BinKey),
+    filename:join(DataDir, http_uri:encode(StrKey)).
+
 journal_filename(JournalDir) ->
     filename:join(JournalDir, ?JOURNAL_FNAME).
+
+delete_file(Path) ->
+    case filelib:is_regular(Path) of
+        true ->
+            file:delete(Path);
+        false ->
+            ok
+    end.
+
