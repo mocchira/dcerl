@@ -9,13 +9,47 @@
 
 %
 % @doc
--spec(start(string(), string(), integer()) -> #dcerl_state{}|{error, any()}).
-start(_DataDir, JournalDir, _MaxSize) ->
-    case journal_read(#dcerl_state{journaldir_path = JournalDir}) of
-        {ok, DS} ->
-            journal_process(DS);
-        _ -> void
-    end.
+-spec(start(string(), string(), integer()) -> {ok,#dcerl_state{}}|{error, any()}).
+start(DataDir, JournalDir, MaxSize) when MaxSize > 0 ->
+    try
+        JP = journal_filename(JournalDir),
+        BakJP = JP ++ ".bak",
+        case filelib:is_regular(BakJP) of
+            true ->
+                case filelib:is_regular(JP) of
+                    true  -> file:delete(BakJP);
+                    false -> file:rename(BakJP, JP)
+                end;
+            false -> void
+        end,
+        {ok, CE} = dcerl:start(),
+        DS = #dcerl_state{
+                          journalfile_iodev = undefined,
+                          journaldir_path = JournalDir,
+                          datadir_path    = DataDir,
+                          max_cache_size  = MaxSize,
+                          cache_entries     = CE
+                         },
+        DS4 = case filelib:is_regular(JP) of
+            true ->
+                {ok, DS2} = journal_read(DS),
+                {ok, DS3} = journal_process(DS2),
+                {ok, IoDev} = file:open(JP, [raw, append]),
+                DS3#dcerl_state{journalfile_iodev = IoDev};
+            false -> DS
+        end,
+        journal_rebuild(DS4)
+    catch
+        error:Reason ->
+            error_logger:error_msg("~p,~p,~p,~p~n",
+                                  [{module, ?MODULE_STRING}, 
+                                   {function, "start/3"},
+                                   {line, ?LINE}, 
+                                   {body, Reason}]),
+            {error, Reason}
+    end;
+start(_, _, _) ->
+    {error, badarg}.
 
 %
 % @doc
@@ -44,9 +78,28 @@ remove(_State, _Key) -> ok.
 
 %
 % @doc
--spec(get(#dcerl_state{}, Key::binary()) -> binary()|#dcerl_fd{}|{error, any()}).
-get(_State, _Key) ->
-    <<>>.
+-spec(get(#dcerl_state{}, Key::binary()) -> 
+      {ok, #dcerl_state{}, binary()}|
+      {ok, #dcerl_state{}, #dcerl_fd{}}|
+      {error, any()}).
+get(#dcerl_state{cache_entries     = CE, 
+                 cache_stats       = CS,
+                 datadir_path      = DataDir,
+                 redundant_op_cnt  = OpCnt,
+                 journalfile_iodev = IoDev} = State, Key) ->
+    case dcerl:get(CE, Key) of
+        ok ->
+            DataPath = data_filename(DataDir, Key),
+            {ok, Bin} = file:read_file(DataPath),
+            Line = io_lib:format("~s ~s~n",[?JOURNAL_OP_READ, Key]),
+            ok = file:write(IoDev, Line),
+            Gets = CS#dcerl_cache_stats.gets,
+            {ok, State#dcerl_state
+                {redundant_op_cnt = OpCnt + 1,
+                 cache_stats = CS#dcerl_cache_stats{gets = Gets + 1}}, Bin};
+        _ ->
+            {not_found, State}
+    end.
 
 %
 % @doc
@@ -89,14 +142,13 @@ journal_read(#dcerl_state{journaldir_path = JD} = DState) ->
         {ok, IoDev} ->
             try
                 {ok, ?JOURNAL_MAGIC} = file:read_line(IoDev),
-                {ok, CE} = dcerl:start(),
                 journal_read_line(DState#dcerl_state{
                         journalfile_iodev = IoDev,
                         ongoing_keys      = sets:new(),
-                        cache_entries     = CE
+                        cache_stats       = #dcerl_cache_stats{}
                     })
             catch
-                exit:Reason ->
+                error:Reason ->
                     error_logger:error_msg("~p,~p,~p,~p~n",
                                            [{module, ?MODULE_STRING}, 
                                             {function, "journal_read/1"},
@@ -154,18 +206,20 @@ journal_read_line(#dcerl_state{journalfile_iodev = IoDev,
                     {error, invalid_journal_format}
             end
     end;
-journal_read_line(#dcerl_state{journalfile_iodev = _IoDev} = _DState, 
-                              {error, Reason}) ->
+journal_read_line(_DState, {error, Reason}) ->
     {error, Reason};
-journal_read_line(#dcerl_state{redundant_op_cnt = OpCnt, cache_entries = CE} = DState, 
-                               eof) ->
-    {ok, DState#dcerl_state{redundant_op_cnt = OpCnt - dcerl:items(CE)}}.
+journal_read_line(#dcerl_state{redundant_op_cnt = OpCnt,
+                               cache_entries    = CE
+                              } = DState, 
+                              eof) ->
+    {ok, NumItem} = dcerl:items(CE),
+    {ok, DState#dcerl_state{redundant_op_cnt = OpCnt - NumItem}}.
 
 journal_process(#dcerl_state{journaldir_path = JournalDir} = DState) ->
     TmpPath = journal_filename(JournalDir) ++ ".tmp",
     journal_process(DState, delete_file(TmpPath)).
 
-journal_process(_, {error, Reason}) ->
+journal_process(_DState, {error, Reason}) ->
     {error, Reason};
 journal_process(#dcerl_state{cache_entries = CE} = DState, ok) ->
     journal_process_2(DState, dcerl:iterator(CE)).
@@ -195,6 +249,80 @@ journal_process_2(#dcerl_state{cache_entries   = CE,
     end;
 journal_process_2(DState, not_found) ->
     {ok, DState}.
+
+journal_rebuild(#dcerl_state{cache_entries     = CE,
+                             journalfile_iodev = undefined,
+                             journaldir_path   = JD} = DState) ->
+    JP = journal_filename(JD),
+    TmpJP = JP ++ ".tmp",
+    BakJP = JP ++ ".bak",
+    Ret = case file:open(TmpJP, [append, raw, delayed_write]) of
+        {ok, IoDev} ->
+            try
+                ok = file:write(IoDev, ?JOURNAL_MAGIC),
+                journal_rebuild_write_line(
+                    DState#dcerl_state{journalfile_iodev = IoDev}, dcerl:iterator(CE))
+            catch
+                error:Reason ->
+                    error_logger:error_msg("~p,~p,~p,~p~n",
+                                           [{module, ?MODULE_STRING}, 
+                                            {function, "journal_rebuild/1"},
+                                            {line, ?LINE}, 
+                                            {body, Reason}]),
+                    {error, Reason}
+            after
+                file:close(IoDev)
+            end;
+        Error ->
+            Error
+    end,
+    case Ret of
+        ok ->
+            try
+                case filelib:is_regular(JP) of
+                    true ->
+                        file:delete(BakJP),
+                        ok = file:rename(JP, BakJP);
+                    false ->
+                        void
+                end,
+                ok = file:rename(TmpJP, JP),
+                file:delete(BakJP),
+                {ok, IoDev2} = file:open(JP, [raw, append]),
+                {ok, DState#dcerl_state{journalfile_iodev = IoDev2}}
+            catch
+                error:Reason2 ->
+                    error_logger:error_msg("~p,~p,~p,~p~n",
+                                           [{module, ?MODULE_STRING}, 
+                                            {function, "journal_rebuild/1"},
+                                            {line, ?LINE}, 
+                                            {body, Reason2}]),
+                    {error, Reason2}
+            end;
+        Error2 ->
+            Error2
+    end;
+journal_rebuild(#dcerl_state{journalfile_iodev = IoDev} = DState) ->
+    file:close(IoDev),
+    journal_rebuild(DState#dcerl_state{journalfile_iodev = undefined}).
+
+journal_rebuild_write_line(#dcerl_state{cache_entries     = CE,
+                                        datadir_path      = DataDir,
+                                        journalfile_iodev = IoDev,
+                                        ongoing_keys      = Keys} = DState, {ok, BinKey}) ->
+    case sets:is_element(BinKey, Keys) of
+        true ->
+            ok = file:write(IoDev, io_lib:format("~s ~s~n",[?JOURNAL_OP_DIRTY, BinKey]));
+        false ->
+            DataPath = data_filename(DataDir, BinKey),
+            Size = filelib:file_size(DataPath),
+            io:format("test key:~s size:~B~n",[BinKey, Size]),
+            Line = io_lib:format("~s ~s ~B~n",[?JOURNAL_OP_CLEAN, BinKey, Size]),
+            ok = file:write(IoDev, Line)
+    end,
+    journal_rebuild_write_line(DState, dcerl:iterator_next(CE));
+journal_rebuild_write_line(_DState, not_found) ->
+    ok.
 
 data_filename(DataDir, BinKey) ->
     StrKey = binary_to_list(BinKey),
