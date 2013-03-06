@@ -12,9 +12,7 @@
 %% For chunked read/write I/F
 -record(dcerl_fd, {
     key                = <<>> :: binary(),
-    datafile_path      = ""   :: string(),
-    tmp_datafile_iodev        :: file:io_device(),
-    has_error                 :: boolean()
+    tmp_datafile_iodev        :: file:io_device()
 }).
 
 %% dcerl's inner state
@@ -23,8 +21,10 @@
     journalfile_iodev      :: file:io_device(),
     datadir_path      = "" :: string(),
     max_cache_size    = 0  :: pos_integer(),
+    chunk_size        = 64 :: pos_integer(),
     redundant_op_cnt  = 0  :: non_neg_integer(),
     ongoing_keys           :: set(),
+    datafile_sizes         :: dict(),
     cache_stats            :: #dcerl_cache_stats{},
     cache_entries          :: term() % NIF resource
 }).
