@@ -63,7 +63,7 @@ start(_, _, _, _) ->
 
 %
 % @doc
--spec(put(#dcerl_state{}, Key::binary(), Val::binary()) ->
+-spec(put(#dcerl_state{}, BinKey::binary(), Val::binary()) ->
       {ok, #dcerl_state{}}|{error, any()}).
 put(#dcerl_state{journalfile_iodev = undefined} = _State, _Key, _Val) ->
     {error, badarg};
@@ -73,19 +73,20 @@ put(#dcerl_state{cache_entries     = CE,
                  ongoing_keys      = OnKeys,
                  datafile_sizes    = FileSizes,
                  redundant_op_cnt  = OpCnt,
-                 journalfile_iodev = IoDev} = State, Key, Val) ->
+                 journalfile_iodev = IoDev} = State, BinKey, Val) ->
     %%% write to tmp
-    Line = io_lib:format("~s ~s~n",[?JOURNAL_OP_DIRTY, Key]),
+    StrKey = filename_bin2str(BinKey),
+    Line = io_lib:format("~s ~s~n",[?JOURNAL_OP_DIRTY, StrKey]),
     ok = file:write(IoDev, Line),
     ok = file:datasync(IoDev),
-    OnKeys2 = sets:add_element(Key, OnKeys),
-    DP = data_filename(DataDir, Key),
+    OnKeys2 = sets:add_element(BinKey, OnKeys),
+    DP = data_filename(DataDir, BinKey),
     TmpDP = DP ++ ?SUFFIX_TMP,
     DiffRec = case filelib:is_regular(DP) of
         true -> 0;
         false -> 1
     end,
-    OldSize = case dict:find(Key, FileSizes) of
+    OldSize = case dict:find(BinKey, FileSizes) of
         {ok, Size} -> Size;
         _ -> 0
     end,
@@ -93,11 +94,11 @@ put(#dcerl_state{cache_entries     = CE,
     ok = file:write_file(TmpDP, Val),
     %%% commit(rename AND write to journal)
     ok = file:rename(TmpDP, DP),
-    CommitLine = io_lib:format("~s ~s ~B~n",[?JOURNAL_OP_CLEAN, Key, erlang:size(Val)]),
+    CommitLine = io_lib:format("~s ~s ~B~n",[?JOURNAL_OP_CLEAN, StrKey, erlang:size(Val)]),
     ok = file:write(IoDev, CommitLine),
-    OnKeys3 = sets:del_element(Key, OnKeys2),
-    FileSizes2 = dict:store(Key, erlang:size(Val), FileSizes),
-    ok = dcerl:put(CE, Key),
+    OnKeys3 = sets:del_element(BinKey, OnKeys2),
+    FileSizes2 = dict:store(BinKey, erlang:size(Val), FileSizes),
+    ok = dcerl:put(CE, BinKey),
     Puts = CS#dcerl_cache_stats.puts,
     PrevSize = CS#dcerl_cache_stats.cached_size,
     PrevRec = CS#dcerl_cache_stats.records,
@@ -113,21 +114,22 @@ put(#dcerl_state{cache_entries     = CE,
 
 %
 % @doc
--spec(put_begin(#dcerl_state{}, Key::binary()) ->
+-spec(put_begin(#dcerl_state{}, BinKey::binary()) ->
      {ok, #dcerl_state{}, #dcerl_fd{}}|{error, any()}).
 put_begin(#dcerl_state{journalfile_iodev = undefined} = _State, _Key) ->
     {error, badarg};
 put_begin(#dcerl_state{datadir_path      = DataDir,
                        ongoing_keys      = OnKeys,
-                       journalfile_iodev = IoDev} = State, Key) ->
-    Line = io_lib:format("~s ~s~n",[?JOURNAL_OP_DIRTY, Key]),
+                       journalfile_iodev = IoDev} = State, BinKey) ->
+    StrKey = filename_bin2str(BinKey),
+    Line = io_lib:format("~s ~s~n",[?JOURNAL_OP_DIRTY, StrKey]),
     ok = file:write(IoDev, Line),
     ok = file:datasync(IoDev),
-    OnKeys2 = sets:add_element(Key, OnKeys),
-    TmpDP = data_filename(DataDir, Key) ++ ?SUFFIX_TMP,
+    OnKeys2 = sets:add_element(BinKey, OnKeys),
+    TmpDP = data_filename(DataDir, BinKey) ++ ?SUFFIX_TMP,
     {ok, TmpIoDev} = file:open(TmpDP, [write, raw, delayed_write]),
     {ok, State#dcerl_state{ongoing_keys = OnKeys2}, 
-              #dcerl_fd{key                = Key, 
+              #dcerl_fd{key                = BinKey, 
                         tmp_datafile_iodev = TmpIoDev}}.
 
 %
@@ -149,26 +151,27 @@ put_end(#dcerl_state{cache_entries     = CE,
                      redundant_op_cnt  = OpCnt,
                      journalfile_iodev = IoDev} = State, 
            #dcerl_fd{tmp_datafile_iodev = TmpIoDev,
-                     key                = Key} = _Fd, true) ->
+                     key                = BinKey} = _Fd, true) ->
     _ = file:close(TmpIoDev),
-    DP = data_filename(DataDir, Key),
+    DP = data_filename(DataDir, BinKey),
     TmpDP = DP ++ ?SUFFIX_TMP,
     DiffRec = case filelib:is_regular(DP) of
         true -> 0;
         false -> 1
     end,
-    OldSize = case dict:find(Key, FileSizes) of
+    OldSize = case dict:find(BinKey, FileSizes) of
         {ok, Size} -> Size;
         _ -> 0
     end,
     NewSize = filelib:file_size(TmpDP),
     DiffSize = NewSize - OldSize,
     ok = file:rename(TmpDP, DP),
-    CommitLine = io_lib:format("~s ~s ~B~n",[?JOURNAL_OP_CLEAN, Key, NewSize]),
+    StrKey = filename_bin2str(BinKey),
+    CommitLine = io_lib:format("~s ~s ~B~n",[?JOURNAL_OP_CLEAN, StrKey, NewSize]),
     ok = file:write(IoDev, CommitLine),
-    OnKeys2 = sets:del_element(Key, OnKeys),
-    FileSizes2 = dict:store(Key, NewSize, FileSizes),
-    ok = dcerl:put(CE, Key),
+    OnKeys2 = sets:del_element(BinKey, OnKeys),
+    FileSizes2 = dict:store(BinKey, NewSize, FileSizes),
+    ok = dcerl:put(CE, BinKey),
     Puts = CS#dcerl_cache_stats.puts,
     PrevSize = CS#dcerl_cache_stats.cached_size,
     PrevRec = CS#dcerl_cache_stats.records,
@@ -185,18 +188,18 @@ put_end(#dcerl_state{datadir_path      = DataDir,
                      ongoing_keys      = OnKeys,
                      redundant_op_cnt  = OpCnt} = State, 
            #dcerl_fd{tmp_datafile_iodev = TmpIoDev,
-                     key                = Key} = _Fd, false) ->
+                     key                = BinKey} = _Fd, false) ->
     _ = file:close(TmpIoDev),
-    DP = data_filename(DataDir, Key),
+    DP = data_filename(DataDir, BinKey),
     TmpDP = DP ++ ?SUFFIX_TMP,
     ok = file:delete(TmpDP),
-    OnKeys2 = sets:del_element(Key, OnKeys),
+    OnKeys2 = sets:del_element(BinKey, OnKeys),
     {ok, State#dcerl_state
                 {redundant_op_cnt = OpCnt + 1,
                  ongoing_keys     = OnKeys2}}.
 %
 % @doc
--spec(remove(#dcerl_state{}, Key::binary()) ->
+-spec(remove(#dcerl_state{}, BinKey::binary()) ->
      {ok, #dcerl_state{}}|{error, any()}).
 remove(#dcerl_state{journalfile_iodev = undefined} = _State, _Key) ->
     {error, badarg};
@@ -206,20 +209,21 @@ remove(#dcerl_state{cache_entries     = CE,
                     ongoing_keys      = OnKeys,
                     datafile_sizes    = FileSizes,
                     redundant_op_cnt  = OpCnt,
-                    journalfile_iodev = IoDev} = State, Key) ->
-    DP = data_filename(DataDir, Key),
+                    journalfile_iodev = IoDev} = State, BinKey) ->
+    DP = data_filename(DataDir, BinKey),
     case filelib:is_regular(DP) of
         true ->
-            DiffSize = case dict:find(Key, FileSizes) of
+            DiffSize = case dict:find(BinKey, FileSizes) of
                            {ok, Size} -> Size;
                            _ -> 0
                        end,
             ok = file:delete(DP),
-            Line = io_lib:format("~s ~s~n",[?JOURNAL_OP_REMOVE, Key]),
+            StrKey = filename_bin2str(BinKey),
+            Line = io_lib:format("~s ~s~n",[?JOURNAL_OP_REMOVE, StrKey]),
             ok = file:write(IoDev, Line),
-            OnKeys2 = sets:del_element(Key, OnKeys),
-            FileSizes2 = dict:erase(Key, FileSizes),
-            ok = dcerl:remove(CE, Key),
+            OnKeys2 = sets:del_element(BinKey, OnKeys),
+            FileSizes2 = dict:erase(BinKey, FileSizes),
+            ok = dcerl:remove(CE, BinKey),
             Dels = CS#dcerl_cache_stats.dels,
             PrevSize = CS#dcerl_cache_stats.cached_size,
             PrevRec = CS#dcerl_cache_stats.records,
@@ -237,7 +241,7 @@ remove(#dcerl_state{cache_entries     = CE,
 
 %
 % @doc
--spec(get(#dcerl_state{}, Key::binary()) -> 
+-spec(get(#dcerl_state{}, BinKey::binary()) -> 
       {ok, #dcerl_state{}, binary()}|
       {ok, #dcerl_state{}, #dcerl_fd{}}|
       {error, any()}).
@@ -249,29 +253,30 @@ get(#dcerl_state{cache_entries     = CE,
                  datafile_sizes    = FileSizes,
                  chunk_size        = ChunkSize,
                  redundant_op_cnt  = OpCnt,
-                 journalfile_iodev = IoDev} = State, Key) ->
-    case dcerl:get(CE, Key) of
+                 journalfile_iodev = IoDev} = State, BinKey) ->
+    case dcerl:get(CE, BinKey) of
         ok ->
-            Chunked = case dict:find(Key, FileSizes) of
+            Chunked = case dict:find(BinKey, FileSizes) of
                 {ok, Size} -> Size > ChunkSize;
                 _ -> false
             end,
             case Chunked of
                 false ->
-                    DataPath = data_filename(DataDir, Key),
+                    DataPath = data_filename(DataDir, BinKey),
                     {ok, Bin} = file:read_file(DataPath),
-                       Line = io_lib:format("~s ~s~n",[?JOURNAL_OP_READ, Key]),
-                       ok = file:write(IoDev, Line),
-                       Gets = CS#dcerl_cache_stats.gets,
-                       NewState = State#dcerl_state
+                    StrKey = filename_bin2str(BinKey),
+                    Line = io_lib:format("~s ~s~n",[?JOURNAL_OP_READ, StrKey]),
+                    ok = file:write(IoDev, Line),
+                    Gets = CS#dcerl_cache_stats.gets,
+                    NewState = State#dcerl_state
                            {redundant_op_cnt = OpCnt + 1,
                            cache_stats = CS#dcerl_cache_stats{gets = Gets + 1}},
-                       {ok, TrimedState} = trim_to_size(NewState),
-                       {ok, TrimedState, Bin};
+                    {ok, TrimedState} = trim_to_size(NewState),
+                    {ok, TrimedState, Bin};
                 true ->
-                    DataPath = data_filename(DataDir, Key),
+                    DataPath = data_filename(DataDir, BinKey),
                     {ok, TmpIoDev} = file:open(DataPath, [read, raw, read_ahead]),
-                    {ok, State, #dcerl_fd{key = Key, 
+                    {ok, State, #dcerl_fd{key = BinKey, 
                                           tmp_datafile_iodev = TmpIoDev}}
             end;
         _ ->
@@ -287,14 +292,15 @@ get_chunk(#dcerl_state{cache_stats       = CS,
                        chunk_size        = ChunkSize,
                        redundant_op_cnt  = OpCnt,
                        journalfile_iodev = IoDev} = State, 
-          #dcerl_fd{key                = Key,
+          #dcerl_fd{key                = BinKey,
                     tmp_datafile_iodev = TmpIoDev} = Fd) ->
     case file:read(TmpIoDev, ChunkSize) of
         {ok, Data} ->
             {ok, State, Fd, Data, false};
         eof ->
             _ = file:close(TmpIoDev),
-            Line = io_lib:format("~s ~s~n",[?JOURNAL_OP_READ, Key]),
+            StrKey = filename_bin2str(BinKey),
+            Line = io_lib:format("~s ~s~n",[?JOURNAL_OP_READ, StrKey]),
             ok = file:write(IoDev, Line),
             Gets = CS#dcerl_cache_stats.gets,
             NewState = State#dcerl_state
@@ -359,8 +365,8 @@ trim_to_size(#dcerl_state{cache_stats =
     {ok, State};
 trim_to_size(State, not_found) ->
     {ok, State};
-trim_to_size(#dcerl_state{cache_entries = CE} = State, {ok, Key}) ->
-    {ok, NewState} = remove(State, Key),
+trim_to_size(#dcerl_state{cache_entries = CE} = State, {ok, BinKey}) ->
+    {ok, NewState} = remove(State, BinKey),
     trim_to_size(NewState, dcerl:eldest(CE)).
 
 -spec(journal_read(#dcerl_state{}) -> {ok, #dcerl_state{}}|{error, any()}).
@@ -399,8 +405,8 @@ journal_read_line(#dcerl_state{journalfile_iodev = IoDev,
                                datafile_sizes    = FileSizes,
                                cache_entries     = CE} = DState, 
                               {ok, Line}) ->
-    [Op,Key|Rest]= string:tokens(Line, ?JOURNAL_SEP),
-    BinKey = list_to_binary(Key),
+    [Op,StrKey|Rest]= string:tokens(Line, ?JOURNAL_SEP),
+    BinKey = filename_str2bin(StrKey),
     case Op of
         ?JOURNAL_OP_REMOVE ->
             dcerl:remove(CE, BinKey),
@@ -548,20 +554,28 @@ journal_rebuild_write_line(
                  journalfile_iodev = IoDev,
                  datafile_sizes    = FileSizes,
                  ongoing_keys      = Keys} = DState, {ok, BinKey}) ->
+    StrKey = filename_bin2str(BinKey),
     case sets:is_element(BinKey, Keys) of
         true ->
-            ok = file:write(IoDev, io_lib:format("~s ~s~n",[?JOURNAL_OP_DIRTY, BinKey]));
+            ok = file:write(IoDev, io_lib:format("~s ~s~n",[?JOURNAL_OP_DIRTY, StrKey]));
         false ->
             NewSize = case dict:find(BinKey, FileSizes) of
                        {ok, Size} -> Size;
                        _ -> 0
                    end,
-            Line = io_lib:format("~s ~s ~B~n",[?JOURNAL_OP_CLEAN, BinKey, NewSize]),
+            Line = io_lib:format("~s ~s ~B~n",[?JOURNAL_OP_CLEAN, StrKey, NewSize]),
             ok = file:write(IoDev, Line)
     end,
     journal_rebuild_write_line(DState, dcerl:iterator_next(CE));
 journal_rebuild_write_line(_DState, not_found) ->
     ok.
+
+filename_bin2str(BinKey) when is_binary(BinKey) ->
+    StrKey = binary_to_list(BinKey),
+    http_uri:encode(StrKey).
+filename_str2bin(StrKey) when is_list(StrKey) ->
+    DecStr = http_uri:decode(StrKey),
+    list_to_binary(DecStr).
 
 data_filename(DataDir, BinKey) ->
     StrKey = binary_to_list(BinKey),
