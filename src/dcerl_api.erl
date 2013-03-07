@@ -110,7 +110,8 @@ put(#dcerl_state{cache_entries     = CE,
                 {puts        = Puts + 1,
                  records     = PrevRec + DiffRec,
                  cached_size = PrevSize + DiffSize}},
-    trim_to_size(NewState).
+    {ok, TrimedState} = trim_to_size(NewState),
+    journal_rebuild_as_need(TrimedState).
 
 %
 % @doc
@@ -183,7 +184,9 @@ put_end(#dcerl_state{cache_entries     = CE,
                 {puts        = Puts + 1,
                  records     = PrevRec + DiffRec,
                  cached_size = PrevSize + DiffSize}},
-    trim_to_size(NewState);
+    {ok, TrimedState} = trim_to_size(NewState),
+    journal_rebuild_as_need(TrimedState);
+
 put_end(#dcerl_state{datadir_path      = DataDir,
                      ongoing_keys      = OnKeys,
                      redundant_op_cnt  = OpCnt} = State, 
@@ -227,14 +230,15 @@ remove(#dcerl_state{cache_entries     = CE,
             Dels = CS#dcerl_cache_stats.dels,
             PrevSize = CS#dcerl_cache_stats.cached_size,
             PrevRec = CS#dcerl_cache_stats.records,
-            {ok, State#dcerl_state
+            NewState = State#dcerl_state
                 {redundant_op_cnt = OpCnt + 1,
                  ongoing_keys     = OnKeys2,
                  datafile_sizes   = FileSizes2,
                  cache_stats      = CS#dcerl_cache_stats
                         {dels        = Dels + 1,
                          records     = PrevRec - 1,
-                         cached_size = PrevSize - DiffSize}}};
+                         cached_size = PrevSize - DiffSize}},
+            journal_rebuild_as_need(NewState);
         false ->
             {ok, State}
     end.
@@ -272,7 +276,8 @@ get(#dcerl_state{cache_entries     = CE,
                            {redundant_op_cnt = OpCnt + 1,
                            cache_stats = CS#dcerl_cache_stats{gets = Gets + 1}},
                     {ok, TrimedState} = trim_to_size(NewState),
-                    {ok, TrimedState, Bin};
+                    {ok, RebuildState} = journal_rebuild_as_need(TrimedState),
+                    {ok, RebuildState, Bin};
                 true ->
                     DataPath = data_filename(DataDir, BinKey),
                     {ok, TmpIoDev} = file:open(DataPath, [read, raw, read_ahead]),
@@ -307,7 +312,8 @@ get_chunk(#dcerl_state{cache_stats       = CS,
                            {redundant_op_cnt = OpCnt + 1,
                             cache_stats = CS#dcerl_cache_stats{gets = Gets + 1}},
             {ok, TrimedState} = trim_to_size(NewState),
-            {ok, TrimedState, Fd, <<>>, true};
+            {ok, RebuildState} = journal_rebuild_as_need(TrimedState),
+            {ok, RebuildState, Fd, <<>>, true};
         {error, Reason} ->
             _ = file:close(TmpIoDev),
             {error, Reason}
@@ -492,6 +498,17 @@ journal_process_2(#dcerl_state{cache_entries   = CE,
     end;
 journal_process_2(DState, not_found) ->
     {ok, DState}.
+
+journal_rebuild_as_need(#dcerl_state{cache_entries     = CE,
+                                     redundant_op_cnt  = OpCnt} = DState) ->
+    case OpCnt >= ?JOURNAL_MAX_RED_OP_CNT andalso 
+         OpCnt >= dcerl:items(CE) of
+        true ->
+            {ok, NewState} = journal_rebuild(DState),
+            {ok, NewState#dcerl_state{redundant_op_cnt = 0}};
+        false ->
+            {ok, DState}
+    end.
 
 journal_rebuild(#dcerl_state{cache_entries     = CE,
                              journalfile_iodev = undefined,
