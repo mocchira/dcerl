@@ -6,16 +6,18 @@
 -export([start/4, stop/1]).
 -export([put/3, put_begin/2, put_chunk/3, put_end/3, remove/2, get/2, get_chunk/2, delete/1]). 
 
+-define(SUFFIX_TMP, ".tmp").
+-define(SUFFIX_BAK, ".bak").
 
 %
 % @doc
 -spec(start(string(), string(), integer(), integer()) -> 
       {ok,#dcerl_state{}}|{error, any()}).
 start(DataDir, JournalDir, MaxSize, ChunkSize) 
-        when MaxSize > 0 andalso ChunkSize > 0 ->
+      when MaxSize > 0 andalso ChunkSize > 0 ->
     try
         JP = journal_filename(JournalDir),
-        BakJP = JP ++ ".bak",
+        BakJP = JP ++ ?SUFFIX_BAK,
         case filelib:is_regular(BakJP) of
             true ->
                 case filelib:is_regular(JP) of
@@ -53,7 +55,7 @@ start(DataDir, JournalDir, MaxSize, ChunkSize)
                                   [{module, ?MODULE_STRING}, 
                                    {function, "start/4"},
                                    {line, ?LINE}, 
-                                   {body, erlang:get_stacktrace()}]),
+                                   {body, Reason}]),
             {error, Reason}
     end;
 start(_, _, _, _) ->
@@ -78,7 +80,7 @@ put(#dcerl_state{cache_entries     = CE,
     ok = file:datasync(IoDev),
     OnKeys2 = sets:add_element(Key, OnKeys),
     DP = data_filename(DataDir, Key),
-    TmpDP = DP ++ ".tmp",
+    TmpDP = DP ++ ?SUFFIX_TMP,
     DiffRec = case filelib:is_regular(DP) of
         true -> 0;
         false -> 1
@@ -111,7 +113,8 @@ put(#dcerl_state{cache_entries     = CE,
 
 %
 % @doc
--spec(put_begin(#dcerl_state{}, Key::binary()) -> {ok, #dcerl_state{}, #dcerl_fd{}}|{error, any()}).
+-spec(put_begin(#dcerl_state{}, Key::binary()) ->
+     {ok, #dcerl_state{}, #dcerl_fd{}}|{error, any()}).
 put_begin(#dcerl_state{datadir_path      = DataDir,
                        ongoing_keys      = OnKeys,
                        journalfile_iodev = IoDev} = State, Key) ->
@@ -119,21 +122,23 @@ put_begin(#dcerl_state{datadir_path      = DataDir,
     ok = file:write(IoDev, Line),
     ok = file:datasync(IoDev),
     OnKeys2 = sets:add_element(Key, OnKeys),
-    TmpDP = data_filename(DataDir, Key) ++ ".tmp",
+    TmpDP = data_filename(DataDir, Key) ++ ?SUFFIX_TMP,
     {ok, TmpIoDev} = file:open(TmpDP, [write, raw, delayed_write]),
     {ok, State#dcerl_state{ongoing_keys = OnKeys2}, 
-         #dcerl_fd{key                = Key, 
-                   tmp_datafile_iodev = TmpIoDev}}.
+              #dcerl_fd{key                = Key, 
+                        tmp_datafile_iodev = TmpIoDev}}.
 
 %
 % @doc
--spec(put_chunk(#dcerl_state{}, #dcerl_fd{}, Chunk::binary()) -> ok|{error, any()}).
+-spec(put_chunk(#dcerl_state{}, #dcerl_fd{}, Chunk::binary()) ->
+      ok|{error, any()}).
 put_chunk(_State, #dcerl_fd{tmp_datafile_iodev = TmpIoDev} = _Fd, Chunk) ->
     file:write(TmpIoDev, Chunk).
 
 %
 % @doc
--spec(put_end(#dcerl_state{}, #dcerl_fd{}, Commit::boolean()) -> {ok, #dcerl_state{}}|{error, any()}).
+-spec(put_end(#dcerl_state{}, #dcerl_fd{}, Commit::boolean()) ->
+     {ok, #dcerl_state{}}|{error, any()}).
 put_end(#dcerl_state{cache_entries     = CE, 
                      cache_stats       = CS,
                      datadir_path      = DataDir,
@@ -145,7 +150,7 @@ put_end(#dcerl_state{cache_entries     = CE,
                      key                = Key} = _Fd, true) ->
     _ = file:close(TmpIoDev),
     DP = data_filename(DataDir, Key),
-    TmpDP = DP ++ ".tmp",
+    TmpDP = DP ++ ?SUFFIX_TMP,
     DiffRec = case filelib:is_regular(DP) of
         true -> 0;
         false -> 1
@@ -181,7 +186,7 @@ put_end(#dcerl_state{datadir_path      = DataDir,
                      key                = Key} = _Fd, false) ->
     _ = file:close(TmpIoDev),
     DP = data_filename(DataDir, Key),
-    TmpDP = DP ++ ".tmp",
+    TmpDP = DP ++ ?SUFFIX_TMP,
     ok = file:delete(TmpDP),
     OnKeys2 = sets:del_element(Key, OnKeys),
     {ok, State#dcerl_state
@@ -189,7 +194,8 @@ put_end(#dcerl_state{datadir_path      = DataDir,
                  ongoing_keys     = OnKeys2}}.
 %
 % @doc
--spec(remove(#dcerl_state{}, Key::binary()) -> {ok, #dcerl_state{}}|{error, any()}).
+-spec(remove(#dcerl_state{}, Key::binary()) ->
+     {ok, #dcerl_state{}}|{error, any()}).
 remove(#dcerl_state{journalfile_iodev = undefined} = _State, _Key) ->
     {error, badarg};
 remove(#dcerl_state{cache_entries     = CE, 
@@ -272,7 +278,9 @@ get(#dcerl_state{cache_entries     = CE,
 
 %
 % @doc
--spec(get_chunk(#dcerl_state{}, #dcerl_fd{}) -> {ok, #dcerl_state{}, #dcerl_fd{}, Chunk::binary(), Tail::boolean()}|{error, any()}).
+-spec(get_chunk(#dcerl_state{}, #dcerl_fd{}) ->
+     {ok, #dcerl_state{}, #dcerl_fd{}, Chunk::binary(), Tail::boolean()}|
+     {error, any()}).
 get_chunk(#dcerl_state{cache_stats       = CS,
                        chunk_size        = ChunkSize,
                        redundant_op_cnt  = OpCnt,
@@ -440,7 +448,7 @@ journal_read_line(#dcerl_state{redundant_op_cnt = OpCnt,
     {ok, DState#dcerl_state{redundant_op_cnt = OpCnt - NumItem}}.
 
 journal_process(#dcerl_state{journaldir_path = JournalDir} = DState) ->
-    TmpPath = journal_filename(JournalDir) ++ ".tmp",
+    TmpPath = journal_filename(JournalDir) ++ ?SUFFIX_TMP,
     journal_process(DState, delete_file(TmpPath)).
 
 journal_process(_DState, {error, Reason}) ->
@@ -458,7 +466,7 @@ journal_process_2(#dcerl_state{cache_entries   = CE,
             NewKeys = sets:del_element(BinKey, Keys),
             dcerl:remove(CE, BinKey),
             DataPath = data_filename(DataDir, BinKey),
-            TmpPath = DataPath ++ ".tmp",
+            TmpPath = DataPath ++ ?SUFFIX_TMP,
             file:delete(DataPath),
             file:delete(TmpPath),
             journal_process_2(DState#dcerl_state{ongoing_keys = NewKeys}, dcerl:iterator_next(CE));
@@ -481,8 +489,8 @@ journal_rebuild(#dcerl_state{cache_entries     = CE,
                              journalfile_iodev = undefined,
                              journaldir_path   = JD} = DState) ->
     JP = journal_filename(JD),
-    TmpJP = JP ++ ".tmp",
-    BakJP = JP ++ ".bak",
+    TmpJP = JP ++ ?SUFFIX_TMP,
+    BakJP = JP ++ ?SUFFIX_BAK,
     Ret = case file:open(TmpJP, [append, raw, delayed_write]) of
         {ok, IoDev} ->
             try
@@ -533,10 +541,11 @@ journal_rebuild(#dcerl_state{journalfile_iodev = IoDev} = DState) ->
     file:close(IoDev),
     journal_rebuild(DState#dcerl_state{journalfile_iodev = undefined}).
 
-journal_rebuild_write_line(#dcerl_state{cache_entries     = CE,
-                                        journalfile_iodev = IoDev,
-                                        datafile_sizes    = FileSizes,
-                                        ongoing_keys      = Keys} = DState, {ok, BinKey}) ->
+journal_rebuild_write_line(
+    #dcerl_state{cache_entries     = CE,
+                 journalfile_iodev = IoDev,
+                 datafile_sizes    = FileSizes,
+                 ongoing_keys      = Keys} = DState, {ok, BinKey}) ->
     case sets:is_element(BinKey, Keys) of
         true ->
             ok = file:write(IoDev, io_lib:format("~s ~s~n",[?JOURNAL_OP_DIRTY, BinKey]));
