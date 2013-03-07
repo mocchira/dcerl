@@ -115,6 +115,8 @@ put(#dcerl_state{cache_entries     = CE,
 % @doc
 -spec(put_begin(#dcerl_state{}, Key::binary()) ->
      {ok, #dcerl_state{}, #dcerl_fd{}}|{error, any()}).
+put_begin(#dcerl_state{journalfile_iodev = undefined} = _State, _Key) ->
+    {error, badarg};
 put_begin(#dcerl_state{datadir_path      = DataDir,
                        ongoing_keys      = OnKeys,
                        journalfile_iodev = IoDev} = State, Key) ->
