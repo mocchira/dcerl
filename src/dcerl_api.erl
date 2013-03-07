@@ -4,6 +4,7 @@
 -include("dcerl.hrl").
 
 -export([start/4, stop/1]).
+-export([stats/1]).
 -export([put/3, put_begin/2, put_chunk/3, put_end/3, remove/2, get/2, get_chunk/2, delete/1]). 
 
 -define(SUFFIX_TMP, ".tmp").
@@ -74,44 +75,54 @@ put(#dcerl_state{cache_entries     = CE,
                  datafile_sizes    = FileSizes,
                  redundant_op_cnt  = OpCnt,
                  journalfile_iodev = IoDev} = State, BinKey, Val) ->
-    %%% write to tmp
-    StrKey = filename_bin2str(BinKey),
-    Line = io_lib:format("~s ~s~n",[?JOURNAL_OP_DIRTY, StrKey]),
-    ok = file:write(IoDev, Line),
-    ok = file:datasync(IoDev),
-    OnKeys2 = sets:add_element(BinKey, OnKeys),
-    DP = data_filename(DataDir, BinKey),
-    TmpDP = DP ++ ?SUFFIX_TMP,
-    DiffRec = case filelib:is_regular(DP) of
-        true -> 0;
-        false -> 1
-    end,
-    OldSize = case dict:find(BinKey, FileSizes) of
-        {ok, Size} -> Size;
-        _ -> 0
-    end,
-    DiffSize = erlang:size(Val) - OldSize,
-    ok = file:write_file(TmpDP, Val),
-    %%% commit(rename AND write to journal)
-    ok = file:rename(TmpDP, DP),
-    CommitLine = io_lib:format("~s ~s ~B~n",[?JOURNAL_OP_CLEAN, StrKey, erlang:size(Val)]),
-    ok = file:write(IoDev, CommitLine),
-    OnKeys3 = sets:del_element(BinKey, OnKeys2),
-    FileSizes2 = dict:store(BinKey, erlang:size(Val), FileSizes),
-    ok = dcerl:put(CE, BinKey),
-    Puts = CS#dcerl_cache_stats.puts,
-    PrevSize = CS#dcerl_cache_stats.cached_size,
-    PrevRec = CS#dcerl_cache_stats.records,
-    NewState = State#dcerl_state
-        {redundant_op_cnt = OpCnt + 1,
-         ongoing_keys     = OnKeys3,
-         datafile_sizes   = FileSizes2,
-         cache_stats      = CS#dcerl_cache_stats
-                {puts        = Puts + 1,
-                 records     = PrevRec + DiffRec,
-                 cached_size = PrevSize + DiffSize}},
-    {ok, TrimedState} = trim_to_size(NewState),
-    journal_rebuild_as_need(TrimedState).
+    try
+        %%% write to tmp
+        StrKey = filename_bin2str(BinKey),
+        Line = io_lib:format("~s ~s~n",[?JOURNAL_OP_DIRTY, StrKey]),
+        ok = file:write(IoDev, Line),
+        ok = file:datasync(IoDev),
+        OnKeys2 = sets:add_element(BinKey, OnKeys),
+        DP = data_filename(DataDir, BinKey),
+        TmpDP = DP ++ ?SUFFIX_TMP,
+        DiffRec = case filelib:is_regular(DP) of
+            true -> 0;
+            false -> 1
+        end,
+        OldSize = case dict:find(BinKey, FileSizes) of
+            {ok, Size} -> Size;
+            _ -> 0
+        end,
+        DiffSize = erlang:size(Val) - OldSize,
+        ok = file:write_file(TmpDP, Val),
+        %%% commit(rename AND write to journal)
+        ok = file:rename(TmpDP, DP),
+        CommitLine = io_lib:format("~s ~s ~B~n",[?JOURNAL_OP_CLEAN, StrKey, erlang:size(Val)]),
+        ok = file:write(IoDev, CommitLine),
+        OnKeys3 = sets:del_element(BinKey, OnKeys2),
+        FileSizes2 = dict:store(BinKey, erlang:size(Val), FileSizes),
+        ok = dcerl:put(CE, BinKey),
+        Puts = CS#dcerl_cache_stats.puts,
+        PrevSize = CS#dcerl_cache_stats.cached_size,
+        PrevRec = CS#dcerl_cache_stats.records,
+        NewState = State#dcerl_state
+            {redundant_op_cnt = OpCnt + 1,
+             ongoing_keys     = OnKeys3,
+             datafile_sizes   = FileSizes2,
+             cache_stats      = CS#dcerl_cache_stats
+                    {puts        = Puts + 1,
+                     records     = PrevRec + DiffRec,
+                     cached_size = PrevSize + DiffSize}},
+        {ok, TrimedState} = trim_to_size(NewState),
+        journal_rebuild_as_need(TrimedState)
+    catch
+        error:Reason ->
+            error_logger:error_msg("~p,~p,~p,~p~n",
+                                  [{module, ?MODULE_STRING}, 
+                                   {function, "put/3"},
+                                   {line, ?LINE}, 
+                                   {body, Reason}]),
+            {error, Reason}
+    end.
 
 %
 % @doc
@@ -122,16 +133,26 @@ put_begin(#dcerl_state{journalfile_iodev = undefined} = _State, _Key) ->
 put_begin(#dcerl_state{datadir_path      = DataDir,
                        ongoing_keys      = OnKeys,
                        journalfile_iodev = IoDev} = State, BinKey) ->
-    StrKey = filename_bin2str(BinKey),
-    Line = io_lib:format("~s ~s~n",[?JOURNAL_OP_DIRTY, StrKey]),
-    ok = file:write(IoDev, Line),
-    ok = file:datasync(IoDev),
-    OnKeys2 = sets:add_element(BinKey, OnKeys),
-    TmpDP = data_filename(DataDir, BinKey) ++ ?SUFFIX_TMP,
-    {ok, TmpIoDev} = file:open(TmpDP, [write, raw, delayed_write]),
-    {ok, State#dcerl_state{ongoing_keys = OnKeys2}, 
-              #dcerl_fd{key                = BinKey, 
-                        tmp_datafile_iodev = TmpIoDev}}.
+    try
+        StrKey = filename_bin2str(BinKey),
+        Line = io_lib:format("~s ~s~n",[?JOURNAL_OP_DIRTY, StrKey]),
+        ok = file:write(IoDev, Line),
+        ok = file:datasync(IoDev),
+        OnKeys2 = sets:add_element(BinKey, OnKeys),
+        TmpDP = data_filename(DataDir, BinKey) ++ ?SUFFIX_TMP,
+        {ok, TmpIoDev} = file:open(TmpDP, [write, raw, delayed_write]),
+        {ok, State#dcerl_state{ongoing_keys = OnKeys2}, 
+                  #dcerl_fd{key                = BinKey, 
+                            tmp_datafile_iodev = TmpIoDev}}
+    catch
+        error:Reason ->
+            error_logger:error_msg("~p,~p,~p,~p~n",
+                                  [{module, ?MODULE_STRING}, 
+                                   {function, "put_begin/2"},
+                                   {line, ?LINE}, 
+                                   {body, Reason}]),
+            {error, Reason}
+    end.
 
 %
 % @doc
@@ -153,53 +174,74 @@ put_end(#dcerl_state{cache_entries     = CE,
                      journalfile_iodev = IoDev} = State, 
            #dcerl_fd{tmp_datafile_iodev = TmpIoDev,
                      key                = BinKey} = _Fd, true) ->
-    _ = file:close(TmpIoDev),
-    DP = data_filename(DataDir, BinKey),
-    TmpDP = DP ++ ?SUFFIX_TMP,
-    DiffRec = case filelib:is_regular(DP) of
-        true -> 0;
-        false -> 1
-    end,
-    OldSize = case dict:find(BinKey, FileSizes) of
-        {ok, Size} -> Size;
-        _ -> 0
-    end,
-    NewSize = filelib:file_size(TmpDP),
-    DiffSize = NewSize - OldSize,
-    ok = file:rename(TmpDP, DP),
-    StrKey = filename_bin2str(BinKey),
-    CommitLine = io_lib:format("~s ~s ~B~n",[?JOURNAL_OP_CLEAN, StrKey, NewSize]),
-    ok = file:write(IoDev, CommitLine),
-    OnKeys2 = sets:del_element(BinKey, OnKeys),
-    FileSizes2 = dict:store(BinKey, NewSize, FileSizes),
-    ok = dcerl:put(CE, BinKey),
-    Puts = CS#dcerl_cache_stats.puts,
-    PrevSize = CS#dcerl_cache_stats.cached_size,
-    PrevRec = CS#dcerl_cache_stats.records,
-    NewState = State#dcerl_state
-        {redundant_op_cnt = OpCnt + 1,
-         ongoing_keys     = OnKeys2,
-         datafile_sizes   = FileSizes2,
-         cache_stats      = CS#dcerl_cache_stats
-                {puts        = Puts + 1,
-                 records     = PrevRec + DiffRec,
-                 cached_size = PrevSize + DiffSize}},
-    {ok, TrimedState} = trim_to_size(NewState),
-    journal_rebuild_as_need(TrimedState);
+    try
+        _ = file:close(TmpIoDev),
+        DP = data_filename(DataDir, BinKey),
+        TmpDP = DP ++ ?SUFFIX_TMP,
+        DiffRec = case filelib:is_regular(DP) of
+            true -> 0;
+            false -> 1
+        end,
+        OldSize = case dict:find(BinKey, FileSizes) of
+            {ok, Size} -> Size;
+            _ -> 0
+        end,
+        NewSize = filelib:file_size(TmpDP),
+        DiffSize = NewSize - OldSize,
+        ok = file:rename(TmpDP, DP),
+        StrKey = filename_bin2str(BinKey),
+        CommitLine = io_lib:format("~s ~s ~B~n",[?JOURNAL_OP_CLEAN, StrKey, NewSize]),
+        ok = file:write(IoDev, CommitLine),
+        OnKeys2 = sets:del_element(BinKey, OnKeys),
+        FileSizes2 = dict:store(BinKey, NewSize, FileSizes),
+        ok = dcerl:put(CE, BinKey),
+        Puts = CS#dcerl_cache_stats.puts,
+        PrevSize = CS#dcerl_cache_stats.cached_size,
+        PrevRec = CS#dcerl_cache_stats.records,
+        NewState = State#dcerl_state
+            {redundant_op_cnt = OpCnt + 1,
+             ongoing_keys     = OnKeys2,
+             datafile_sizes   = FileSizes2,
+             cache_stats      = CS#dcerl_cache_stats
+                    {puts        = Puts + 1,
+                     records     = PrevRec + DiffRec,
+                     cached_size = PrevSize + DiffSize}},
+        {ok, TrimedState} = trim_to_size(NewState),
+        journal_rebuild_as_need(TrimedState)
+    catch
+        error:Reason ->
+            error_logger:error_msg("~p,~p,~p,~p~n",
+                                  [{module, ?MODULE_STRING}, 
+                                   {function, "put_end/3"},
+                                   {line, ?LINE}, 
+                                   {body, Reason}]),
+            {error, Reason}
+    end;
 
 put_end(#dcerl_state{datadir_path      = DataDir,
                      ongoing_keys      = OnKeys,
                      redundant_op_cnt  = OpCnt} = State, 
            #dcerl_fd{tmp_datafile_iodev = TmpIoDev,
                      key                = BinKey} = _Fd, false) ->
-    _ = file:close(TmpIoDev),
-    DP = data_filename(DataDir, BinKey),
-    TmpDP = DP ++ ?SUFFIX_TMP,
-    ok = file:delete(TmpDP),
-    OnKeys2 = sets:del_element(BinKey, OnKeys),
-    {ok, State#dcerl_state
-                {redundant_op_cnt = OpCnt + 1,
-                 ongoing_keys     = OnKeys2}}.
+    try
+        _ = file:close(TmpIoDev),
+        DP = data_filename(DataDir, BinKey),
+        TmpDP = DP ++ ?SUFFIX_TMP,
+        ok = file:delete(TmpDP),
+        OnKeys2 = sets:del_element(BinKey, OnKeys),
+        {ok, State#dcerl_state
+                    {redundant_op_cnt = OpCnt + 1,
+                     ongoing_keys     = OnKeys2}}
+    catch
+        error:Reason ->
+            error_logger:error_msg("~p,~p,~p,~p~n",
+                                  [{module, ?MODULE_STRING}, 
+                                   {function, "put_end/3"},
+                                   {line, ?LINE}, 
+                                   {body, Reason}]),
+            {error, Reason}
+    end.
+
 %
 % @doc
 -spec(remove(#dcerl_state{}, BinKey::binary()) ->
@@ -216,29 +258,39 @@ remove(#dcerl_state{cache_entries     = CE,
     DP = data_filename(DataDir, BinKey),
     case filelib:is_regular(DP) of
         true ->
-            DiffSize = case dict:find(BinKey, FileSizes) of
-                           {ok, Size} -> Size;
-                           _ -> 0
-                       end,
-            ok = file:delete(DP),
-            StrKey = filename_bin2str(BinKey),
-            Line = io_lib:format("~s ~s~n",[?JOURNAL_OP_REMOVE, StrKey]),
-            ok = file:write(IoDev, Line),
-            OnKeys2 = sets:del_element(BinKey, OnKeys),
-            FileSizes2 = dict:erase(BinKey, FileSizes),
-            ok = dcerl:remove(CE, BinKey),
-            Dels = CS#dcerl_cache_stats.dels,
-            PrevSize = CS#dcerl_cache_stats.cached_size,
-            PrevRec = CS#dcerl_cache_stats.records,
-            NewState = State#dcerl_state
-                {redundant_op_cnt = OpCnt + 1,
-                 ongoing_keys     = OnKeys2,
-                 datafile_sizes   = FileSizes2,
-                 cache_stats      = CS#dcerl_cache_stats
-                        {dels        = Dels + 1,
-                         records     = PrevRec - 1,
-                         cached_size = PrevSize - DiffSize}},
-            journal_rebuild_as_need(NewState);
+            try
+                DiffSize = case dict:find(BinKey, FileSizes) of
+                               {ok, Size} -> Size;
+                               _ -> 0
+                           end,
+                ok = file:delete(DP),
+                StrKey = filename_bin2str(BinKey),
+                Line = io_lib:format("~s ~s~n",[?JOURNAL_OP_REMOVE, StrKey]),
+                ok = file:write(IoDev, Line),
+                OnKeys2 = sets:del_element(BinKey, OnKeys),
+                FileSizes2 = dict:erase(BinKey, FileSizes),
+                ok = dcerl:remove(CE, BinKey),
+                Dels = CS#dcerl_cache_stats.dels,
+                PrevSize = CS#dcerl_cache_stats.cached_size,
+                PrevRec = CS#dcerl_cache_stats.records,
+                NewState = State#dcerl_state
+                    {redundant_op_cnt = OpCnt + 1,
+                     ongoing_keys     = OnKeys2,
+                     datafile_sizes   = FileSizes2,
+                     cache_stats      = CS#dcerl_cache_stats
+                            {dels        = Dels + 1,
+                             records     = PrevRec - 1,
+                             cached_size = PrevSize - DiffSize}},
+                journal_rebuild_as_need(NewState)
+            catch
+                error:Reason ->
+                    error_logger:error_msg("~p,~p,~p,~p~n",
+                                  [{module, ?MODULE_STRING}, 
+                                   {function, "remove/2"},
+                                   {line, ?LINE}, 
+                                   {body, Reason}]),
+                {error, Reason}
+            end;
         false ->
             {ok, State}
     end.
@@ -260,32 +312,48 @@ get(#dcerl_state{cache_entries     = CE,
                  journalfile_iodev = IoDev} = State, BinKey) ->
     case dcerl:get(CE, BinKey) of
         ok ->
-            Chunked = case dict:find(BinKey, FileSizes) of
-                {ok, Size} -> Size > ChunkSize;
-                _ -> false
-            end,
-            case Chunked of
-                false ->
-                    DataPath = data_filename(DataDir, BinKey),
-                    {ok, Bin} = file:read_file(DataPath),
-                    StrKey = filename_bin2str(BinKey),
-                    Line = io_lib:format("~s ~s~n",[?JOURNAL_OP_READ, StrKey]),
-                    ok = file:write(IoDev, Line),
-                    Gets = CS#dcerl_cache_stats.gets,
-                    NewState = State#dcerl_state
-                           {redundant_op_cnt = OpCnt + 1,
-                           cache_stats = CS#dcerl_cache_stats{gets = Gets + 1}},
-                    {ok, TrimedState} = trim_to_size(NewState),
-                    {ok, RebuildState} = journal_rebuild_as_need(TrimedState),
-                    {ok, RebuildState, Bin};
-                true ->
-                    DataPath = data_filename(DataDir, BinKey),
-                    {ok, TmpIoDev} = file:open(DataPath, [read, raw, read_ahead]),
-                    {ok, State, #dcerl_fd{key = BinKey, 
-                                          tmp_datafile_iodev = TmpIoDev}}
+            try
+                Chunked = case dict:find(BinKey, FileSizes) of
+                    {ok, Size} -> Size > ChunkSize;
+                    _ -> false
+                end,
+                case Chunked of
+                    false ->
+                        DataPath = data_filename(DataDir, BinKey),
+                        {ok, Bin} = file:read_file(DataPath),
+                        StrKey = filename_bin2str(BinKey),
+                        Line = io_lib:format("~s ~s~n",[?JOURNAL_OP_READ, StrKey]),
+                        ok = file:write(IoDev, Line),
+                        Gets = CS#dcerl_cache_stats.gets,
+                        Hits = CS#dcerl_cache_stats.hits,
+                        NewState = State#dcerl_state
+                               {redundant_op_cnt = OpCnt + 1,
+                                cache_stats      = CS#dcerl_cache_stats
+                                    {gets = Gets + 1,
+                                     hits = Hits + 1}},
+                        {ok, TrimedState} = trim_to_size(NewState),
+                        {ok, RebuildState} = journal_rebuild_as_need(TrimedState),
+                        {ok, RebuildState, Bin};
+                    true ->
+                        DataPath = data_filename(DataDir, BinKey),
+                        {ok, TmpIoDev} = file:open(DataPath, [read, binary, raw, read_ahead]),
+                        {ok, State, #dcerl_fd{key = BinKey, 
+                                              tmp_datafile_iodev = TmpIoDev}}
+                end
+            catch
+                error:Reason ->
+                    error_logger:error_msg("~p,~p,~p,~p~n",
+                                       [{module, ?MODULE_STRING}, 
+                                        {function, "get/2"},
+                                        {line, ?LINE}, 
+                                        {body, Reason}]),
+                    {error, Reason}
             end;
         _ ->
-            {not_found, State}
+            Gets = CS#dcerl_cache_stats.gets,
+            {not_found, State#dcerl_state{
+                    cache_stats = CS#dcerl_cache_stats{
+                        gets = Gets + 1}}}
     end.
 
 %
@@ -303,17 +371,30 @@ get_chunk(#dcerl_state{cache_stats       = CS,
         {ok, Data} ->
             {ok, State, Fd, Data, false};
         eof ->
-            _ = file:close(TmpIoDev),
-            StrKey = filename_bin2str(BinKey),
-            Line = io_lib:format("~s ~s~n",[?JOURNAL_OP_READ, StrKey]),
-            ok = file:write(IoDev, Line),
-            Gets = CS#dcerl_cache_stats.gets,
-            NewState = State#dcerl_state
-                           {redundant_op_cnt = OpCnt + 1,
-                            cache_stats = CS#dcerl_cache_stats{gets = Gets + 1}},
-            {ok, TrimedState} = trim_to_size(NewState),
-            {ok, RebuildState} = journal_rebuild_as_need(TrimedState),
-            {ok, RebuildState, Fd, <<>>, true};
+            try
+                _ = file:close(TmpIoDev),
+                StrKey = filename_bin2str(BinKey),
+                Line = io_lib:format("~s ~s~n",[?JOURNAL_OP_READ, StrKey]),
+                ok = file:write(IoDev, Line),
+                Gets = CS#dcerl_cache_stats.gets,
+                Hits = CS#dcerl_cache_stats.hits,
+                NewState = State#dcerl_state
+                               {redundant_op_cnt = OpCnt + 1,
+                                cache_stats = CS#dcerl_cache_stats{
+                                    gets = Gets + 1,
+                                    hits = Hits + 1}},
+                {ok, TrimedState} = trim_to_size(NewState),
+                {ok, RebuildState} = journal_rebuild_as_need(TrimedState),
+                {ok, RebuildState, Fd, <<>>, true}
+            catch
+                error:Reason ->
+                    error_logger:error_msg("~p,~p,~p,~p~n",
+                                       [{module, ?MODULE_STRING}, 
+                                        {function, "get_chunk/2"},
+                                        {line, ?LINE}, 
+                                        {body, Reason}]),
+                    {error, Reason}
+            end;
         {error, Reason} ->
             _ = file:close(TmpIoDev),
             {error, Reason}
@@ -325,10 +406,20 @@ get_chunk(#dcerl_state{cache_stats       = CS,
 -spec(delete(#dcerl_state{}) -> {ok, #dcerl_state{}}|{error, any()}).
 delete(#dcerl_state{datadir_path      = DataDir,
                     journaldir_path   = JournalDir} = State) ->
-    {ok, NewState} = stop(State),
-    file_delete_all(JournalDir),
-    file_delete_all(DataDir),
-    {ok, NewState}.
+    try
+        {ok, NewState} = stop(State),
+        file_delete_all(JournalDir),
+        file_delete_all(DataDir),
+        {ok, NewState}
+    catch
+        error:Reason ->
+            error_logger:error_msg("~p,~p,~p,~p~n",
+                                  [{module, ?MODULE_STRING}, 
+                                   {function, "delete/1"},
+                                   {line, ?LINE}, 
+                                   {body, Reason}]),
+            {error, Reason}
+    end.
 
 %
 % @doc
@@ -337,9 +428,23 @@ delete(#dcerl_state{datadir_path      = DataDir,
 stop(#dcerl_state{journalfile_iodev = undefined} = State) ->
     {ok, State};
 stop(#dcerl_state{journalfile_iodev = IoDev} = State) ->
-    {ok, NewState} = trim_to_size(State),
-    file:close(IoDev),
-    {ok, NewState#dcerl_state{journalfile_iodev = undefined}}.
+    try
+        {ok, NewState} = trim_to_size(State),
+        file:close(IoDev),
+        {ok, NewState#dcerl_state{journalfile_iodev = undefined}}
+    catch
+        error:Reason ->
+            error_logger:error_msg("~p,~p,~p,~p~n",
+                                  [{module, ?MODULE_STRING}, 
+                                   {function, "stop/1"},
+                                   {line, ?LINE}, 
+                                   {body, Reason}]),
+            {error, Reason}
+    end.
+
+-spec(stats(#dcerl_state{}) -> {ok, #dcerl_cache_stats{}}).
+stats(#dcerl_state{cache_stats = CS} = _State) ->
+    {ok, CS}.
 
 %
 % ==== private functions ====
@@ -501,8 +606,9 @@ journal_process_2(DState, not_found) ->
 
 journal_rebuild_as_need(#dcerl_state{cache_entries     = CE,
                                      redundant_op_cnt  = OpCnt} = DState) ->
+    {ok, NumItem} = dcerl:items(CE),
     case OpCnt >= ?JOURNAL_MAX_RED_OP_CNT andalso 
-         OpCnt >= dcerl:items(CE) of
+         OpCnt >= NumItem of
         true ->
             {ok, NewState} = journal_rebuild(DState),
             {ok, NewState#dcerl_state{redundant_op_cnt = 0}};

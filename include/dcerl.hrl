@@ -36,5 +36,5 @@
 -define(JOURNAL_OP_CLEAN,  "CLEAN").
 -define(JOURNAL_OP_DIRTY,  "DIRTY").
 -define(JOURNAL_OP_REMOVE, "REMOVE").
--define(JOURNAL_MAX_RED_OP_CNT, 2000).
+-define(JOURNAL_MAX_RED_OP_CNT, 5).
 
