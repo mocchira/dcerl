@@ -6,7 +6,7 @@ Main goals of this product are described below.
 
  * `SSD-Aware`: Enable to specify separate paths for Data files(on SSD) and the journal file(on HDD).
 
- * `S3 Compatible`: Enable a key to use a sequence of Unicode characters(`UTF8`), Max Length are limited in `1024byte`.
+ * `S3 Compatible`: Enable a key to use a sequence of Unicode characters(`UTF8`).
 
  * `Concurrency`: Enable to execute by a Erlang process.
 
