@@ -1,74 +1,95 @@
 -module(dcerl).
--author('yoshiyuki.kanno@stoic.co.jp').
+-author('Yoshiyuki Kanno').
 
--export([start/3, stop/1]).
--export([put/3, put4chunked/4, remove/2, get/2, getpath/2, get4chunked/2, flush/1, delete/1]). 
+-export([start/0, put/2, get/2, remove/2, eldest/1, items/1, stop/1]).
+-export([iterator/1, iterator_next/1, iterator_has_next/1]).
+-on_load(init/0).
 
-%
-% @doc
-% Descriptor = dcerl:start(DataDir, JournalDir, MaxSize),
--spec(start(string(), string(), integer()) -> reference()).
-start(_DataDir, _JournalDir, _MaxSize) ->
-    true.
 
-%
-% @doc
-% dcerl:put(Descriptor, Key, BinBody),
--spec(put(reference(), binary(), binary()|string()) -> boolean()).
-put(_Descriptor, _Key, Body) when is_binary(Body) ->
-    true.
+%% @doc Initialize
+%%
+-spec(init() ->
+             ok).
+init() ->
+    SoName = case code:priv_dir(?MODULE) of
+                 {error, bad_name} ->
+                     case code:which(?MODULE) of
+                         Filename when is_list(Filename) ->
+                             filename:join([filename:dirname(Filename),"../priv", ?MODULE_STRING]);
+                         _ ->
+                             filename:join("../priv", ?MODULE_STRING)
+                     end;
+                 Dir ->
+                     filename:join(Dir, ?MODULE_STRING)
+             end,
+    erlang:load_nif(SoName, 0).
 
-%
-% @doc
-% dcerl:put4chunked(Descriptor, Key, BinChunkedBody, Tail),
--spec(put4chunked(reference(), binary(), binary(), boolean()) -> boolean()).
-put4chunked(_Descriptor, _Key, _BinChunkedBody, _Tail) ->
-    true.
 
-%
-% @doc
-% dcerl:remove(Descriptor, Key),
--spec(remove(reference(), binary()) -> boolean()).
-remove(_Descriptor, _Key) ->
-    true.
-%
-% @doc
-% RespBody = dcerl:get(Descriptor, Key),
--spec(get(reference(), binary()) -> binary()).
-get(_Descriptor, _Key) ->
-    <<>>.
+%% @doc Launch dcerl
+%%
+-spec(start() ->
+             {ok, any()}).
+start() ->
+    exit(nif_library_not_loaded).
 
-%
-% @doc
-% CachedPath = dcerl:getpath(Descriptor, Key),
--spec(getpath(reference(), binary()) -> string()).
-getpath(_Descriptor, _Key) ->
-    "".
 
-%
-% @doc
-% {ChunkedBody, Tail} = dcerl:get4chunked(Descriptor, Key),
--spec(get4chunked(reference(), binary()) -> {binary(), boolean()}).
-get4chunked(_Descriptor, _Key) ->
-    {<<>>, true}.
+%% @doc Insert an object into the dcerl
+%%
+-spec(put(any(), binary()) ->
+             ok | {error, any()}).
+put(_Res, _Key) ->
+    exit(nif_library_not_loaded).
 
-%
-% @doc
-% dcerl:flush(Descriptor),
--spec(flush(reference()) -> boolean()).
-flush(_Descriptor) ->
-    true.
 
-%
-% @doc
-% dcerl:delete(Descriptor),
--spec(delete(reference()) -> boolean()).
-delete(_Descriptor) ->
-    true.
+%% @doc Retrieve an object from the dcerl
+%%
+-spec(get(any(), binary()) ->
+             ok | not_found | {error, any()}).
+get(_Res, _Key) ->
+    exit(nif_library_not_loaded).
 
-%
-% @doc
-% dcerl:stop(Descriptor),
--spec(stop(reference()) -> boolean()).
-stop(_Descriptor) ->
-    true.
+%% @doc Remove an object from the dcerl
+%%
+-spec(remove(any(), binary()) ->
+             ok | {error, any()}).
+remove(_Res, _Key) ->
+    exit(nif_library_not_loaded).
+
+
+%% @doc Retrieve size of cached objects
+%%
+-spec(eldest(any()) ->
+             {ok, binary()} | {error, any()}).
+eldest(_Res) ->
+    exit(nif_library_not_loaded).
+
+-spec(iterator(any()) ->
+             {ok, binary()} | {error, any()}).
+iterator(_Res) ->
+    exit(nif_library_not_loaded).
+
+-spec(iterator_next(any()) ->
+             {ok, binary()} | {error, any()}).
+iterator_next(_Res) ->
+    exit(nif_library_not_loaded).
+
+-spec(iterator_has_next(any()) ->
+        boolean()).
+iterator_has_next(_Res) ->
+    exit(nif_library_not_loaded).
+
+%% @doc Retrieve total of cached objects
+%%
+-spec(items(any()) ->
+             {ok, integer()} | {error, any()}).
+items(_Res) ->
+    exit(nif_library_not_loaded).
+
+
+%% @doc Halt the dcerl
+%%
+-spec(stop(any()) ->
+             ok | {error, any()}).
+stop(_Res) ->
+    exit(nif_library_not_loaded).
+

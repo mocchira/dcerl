@@ -1,22 +1,18 @@
 Dcerl
 =======
 
-Dcerl is a Porting library of [DiskLruCache](https://github.com/JakeWharton/DiskLruCache) for erlalng.
+Dcerl is a Porting library of [DiskLruCache](https://github.com/JakeWharton/DiskLruCache) for Erlalng.
 Main goals of this product are described below.
 
  * `SSD-Aware`: Enable to specify separate paths for Data files(on SSD) and the journal file(on HDD).
 
- * `S3 Compatible`: Enable a key to use a sequence of Unicode characters(`UTF8`), Max Length are limited in `1024byte`.
+ * `S3 Compatible`: Enable a key to use a sequence of Unicode characters(`UTF8`).
 
- * `Concurrency`: Enable to execute multi application instances.
+ * `Concurrency`: Enable to execute by a Erlang process.
 
  * `Reduce complexities`: Get rid of rarely used functions like multi values per a key.
 
- * `Improve maintainability`: Reduce the number of files per a directory(also obsolete OS file systems friendly).
-
- * `Improve CPU AND Memory efficiency`: Replace the journal file representation `text` with `binary`.
-
- * `Expand Usecases`: Provide chunked(split) data interfaces to handle `chunked|multipart HTTP bodies`.
+ * `Expand Usecases`: Provide chunked(split) data interfaces to handle very large files.
 
 Dependencies
 =======
@@ -39,32 +35,35 @@ Usage
 
 ```
 
-```erlang
+```Erlang
 
-    %% on erlang REPL
-    %% -spec(start(string(), string(), integer()) -> ref()).
-    Descriptor = dcerl:start(DataDir, JournalDir, MaxSize),
+    %% on Erlang REPL
+    {ok, DS} = dcerl_api:start(DataDir, JournalDir, MaxSize, MaxChunkSize),
   
-    %% -spec(put(ref(), binary(), binary()) -> boolean()).
-    dcerl:put(Descriptor, Key, BinBody),
-    %% -spec(put(ref(), binary(), string()) -> boolean()).
-    dcerl:put(Descriptor, Key, UploadedFilePath),
-    %% -spec(put4chunked(ref(), binary(), binary(), boolean()) -> boolean()).
-    dcerl:put4chunked(Descriptor, Key, BinChunkedBody, Tail),
+    {ok, DS2} = dcerl_api:put(DS, BinKey, BinBody),   %% normal put
 
-    %% -spec(remove(ref(), binary()) -> boolean()).
-    dcerl:remove(Descriptor, Key),
+    {ok, DS3} = dcerl_api:remove(DS2, BinKey),        %% remove
+
+    {ok, DS4, FD} = dcerl_api:put_begin(DS3, BinKey), %% chunked put
+    ok  = dcerl_api:put_chunk(DS4, FD, Chunk1),
+    ok  = dcerl_api:put_chunk(DS4, FD, Chunk2),
+    ok  = dcerl_api:put_chunk(DS4, FD, Chunk3),
+    {ok, DS5} = dcerl_api:put_end(DS4, FD, true),     %% commit
+    %%{ok, DS5} = dcerl_api:put_end(DS4, FD, false),  %% abort 
   
-    %% -spec(get(ref(), binary()) -> binary()).
-    RespBody = dcerl:get(Descriptor, Key),
-    %% -spec(getpath(ref(), binary()) -> string()).
-    CachedPath = dcerl:getpath(Descriptor, Key),
-    %% -spec(get4chunked(ref(), binary()) -> {binary(), boolean()}).
-    {ChunkedBody, Tail} = dcerl:get4chunked(Descriptor, Key),
+    case dcerl:get(DS5, BinKey) of
+        {ok, DS6, #dcerl_fd{tmp_datafile_iodev = IoDev} = FD2} ->
+            %% chunked get
+            %% got the wrapped FD record
+            %% call `get_chunk` until the last of returned parameter become `true`
+            void;
+        {ok, DS6, Bin} ->
+            %% normal get
+            %% got the whole Data 
+            void;
+        _ -> void
+    end,
   
-    %% -spec((ref()) -> boolean()).
-    dcerl:flush(Descriptor),
-    %% -spec(delete(ref()) -> boolean()).
-    dcerl:delete(Descriptor),
+    dcerl_api:delete(DS6), %% delete all of cache files AND a journal file
 
 ```

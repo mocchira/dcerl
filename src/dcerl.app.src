@@ -1,8 +1,8 @@
 {application, dcerl,
-  [{description, "Erlang disk based caching library"},
-   {mod, {dcerl_app, []}},
-   {vsn, "0.1.0"},
-   {modules, []},
+  [{description, "Erlang disk based SSD-Aware caching library"},
+   {mod, {dcerl, []}},
+   {vsn, "0.2.0"},
+   {modules, [dcerl, dcerl_api]},
    {registered, []},
    {applications, [kernel, stdlib]}
   ]}.
