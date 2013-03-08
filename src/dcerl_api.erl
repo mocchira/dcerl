@@ -47,8 +47,8 @@ start(DataDir, JournalDir, MaxSize, ChunkSize)
                 DS3#dcerl_state{journalfile_iodev = IoDev};
             false -> DS
         end,
-        ok = mkdir(JournalDir),
-        ok = mkdir(DataDir),
+        ok = filelib:ensure_dir(JournalDir),
+        ok = filelib:ensure_dir(DataDir),
         journal_rebuild(DS4)
     catch
         error:Reason ->
@@ -453,17 +453,6 @@ stats(#dcerl_state{cache_stats = CS} = _State) ->
 %
 % @doc
 % journal file operations
-
-mkdir(Dir) ->
-    case file:make_dir(Dir) of
-        ok ->
-            ok;
-        {error, eexist} ->
-            ok;
-        Error ->
-            Error
-    end.
-
 trim_to_size(#dcerl_state{cache_entries = CE} = State) ->
     trim_to_size(State, dcerl:eldest(CE)).
 

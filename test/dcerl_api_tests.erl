@@ -25,8 +25,8 @@ data_block({SourceSz, Source}, BlockSize) ->
 normal_test() ->
     {ok, Dir} = file:get_cwd(),
     Src = init_source(),
-    DataDir = filename:join(Dir, "data"),
-    JournalDir = filename:join(Dir, "journal"),
+    DataDir = filename:join(Dir, "data") ++ "/",
+    JournalDir = filename:join(Dir, "journal") ++ "/",
     {ok, DS} = dcerl_api:start(DataDir, JournalDir, 1024, 128),
     BinBody = data_block(Src, 128),
     BinKey = <<"test.com/b/path_to_file.jpg">>,
@@ -60,8 +60,8 @@ normal_test() ->
 roll_test() ->
     {ok, Dir} = file:get_cwd(),
     Src = init_source(),
-    DataDir = filename:join(Dir, "data"),
-    JournalDir = filename:join(Dir, "journal"),
+    DataDir = filename:join(Dir, "data") ++ "/",
+    JournalDir = filename:join(Dir, "journal") ++ "/",
     {ok, DS} = dcerl_api:start(DataDir, JournalDir, 1024, 512),
     BinBody = data_block(Src, 384),
     BinKey = <<"test.com/b/path_to_file.jpg">>,
@@ -76,13 +76,15 @@ roll_test() ->
     {not_found, DS8} = dcerl_api:get(DS7, <<BinKey/binary, <<".2">>/binary >>),  
     {ok, CS2} = dcerl_api:stats(DS8),
     ?assertEqual(2, CS2#dcerl_cache_stats.records),
+    {ok, _} = dcerl_api:delete(DS8),
     ok.
 
 recover_test() ->
     {ok, Dir} = file:get_cwd(),
     Src = init_source(),
-    DataDir = filename:join(Dir, "data"),
-    JournalDir = filename:join(Dir, "journal"),
+    DataDir = filename:join(Dir, "data") ++ "/",
+    JournalDir = filename:join(Dir, "journal") ++ "/",
+    io:format(user,"[debug] d:~p j:~p~n", [DataDir, JournalDir]),
     {ok, DS} = dcerl_api:start(DataDir, JournalDir, 1024, 512),
     BinBody = data_block(Src, 384),
     BinKey = <<"test.com/b/path_to_file.jpg">>,
@@ -93,6 +95,7 @@ recover_test() ->
     {ok, DS5} = dcerl_api:start(DataDir, JournalDir, 1024, 512),
     {ok, CS} = dcerl_api:stats(DS5),
     ?assertEqual(2, CS#dcerl_cache_stats.records),
+    {ok, _} = dcerl_api:delete(DS5),
     ok.
 
 get_chunked(DS, FD, Chunk) ->
